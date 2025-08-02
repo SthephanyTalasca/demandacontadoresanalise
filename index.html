@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panorama Inteligente de Atendimento</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .chart-container { position: relative; width: 100%; height: 24rem; max-height: 400px; }
+        .spinner { border: 4px solid rgba(0, 0, 0, 0.1); width: 36px; height: 36px; border-radius: 50%; border-left-color: #4f46e5; animation: spin 1s ease infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .main-content.hidden { display: none; }
+    </style>
+</head>
+<body class="text-slate-700">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-slate-800">Panorama Inteligente de Atendimento</h1>
+            <p class="mt-1 text-slate-500">Uma análise interativa dos canais de suporte, com dados reais do Slack.</p>
+        </header>
+
+        <div id="loading-state" class="text-center py-16">
+            <div class="spinner mx-auto"></div>
+            <p class="mt-4 text-slate-500">A carregar e analisar dados do Slack...</p>
+        </div>
+
+        <div id="error-state" class="hidden text-center py-16 bg-red-50 p-6 rounded-lg">
+             <p class="text-lg font-semibold text-red-700">Ocorreu um Erro</p>
+             <p id="error-message" class="mt-2 text-red-600"></p>
+        </div>
+
+        <div id="main-content" class="hidden">
+            <section class="mb-8 flex flex-col sm:flex-row gap-4 items-center">
+                <div class="flex items-center bg-slate-200 rounded-lg p-1 space-x-1" id="time-filter-buttons">
+                    <button data-filter="monthly" class="px-4 py-1.5 text-sm font-semibold rounded-md text-slate-600 hover:bg-slate-300 transition-colors">Mensal</button>
+                    <button data-filter="quarterly" class="px-4 py-1.5 text-sm font-semibold rounded-md text-slate-600 hover:bg-slate-300 transition-colors">Trimestral</button>
+                    <button data-filter="annual" class="px-4 py-1.5 text-sm font-semibold rounded-md bg-white text-indigo-600 shadow-sm transition-colors">Anual</button>
+                </div>
+            </section>
+
+            <main class="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
+                <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-lg font-semibold text-slate-800">Análise de Causa Raiz</h3>
+                    <div class="chart-container"><canvas id="rootCauseChart"></canvas></div>
+                </div>
+                <div class="lg:col-span-3 bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-lg font-semibold text-slate-800">Tópicos Mais Frequentes</h3>
+                    <div class="chart-container"><canvas id="frequentTopicsChart"></canvas></div>
+                </div>
+                <div class="lg:col-span-5 bg-white p-6 rounded-lg shadow-md">
+                    <h3 class="text-lg font-semibold text-slate-800">Identificação de Necessidades de Treinamento</h3>
+                    <div class="chart-container"><canvas id="trainingNeedsChart"></canvas></div>
+                </div>
+            </main>
+
+            <section class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-slate-800">Detalhes das Mensagens Analisadas</h3>
+                <div class="overflow-x-auto mt-4">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-slate-700 uppercase bg-slate-100">
+                            <tr>
+                                <th class="px-4 py-3">Autor</th>
+                                <th class="px-4 py-3">Mensagem</th>
+                                <th class="px-4 py-3">Tópico (IA)</th>
+                                <th class="px-4 py-3">Categoria (IA)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="messages-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <footer class="text-center mt-8 text-xs text-slate-400">
+            <p>Dashboard gerado com HTML, TailwindCSS, Chart.js e Gemini AI.</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const SERVER_URL = 'https://demandacontadoresanalise.vercel.app/api/messages';
+
+            const CATEGORY_COLORS = {
+                'Problema na Ferramenta': '#ef4444', 
+                'Dificuldade do Atendente': '#f97316',
+                'Dúvida de Uso': '#eab308',
+                'Sugestão de Melhoria': '#22c55e',
+                'Outro': '#6b7280',
+                'Não Analisado': '#9ca3af',
+            };
+
+            let state = { allMessages: [], timeFilter: 'annual', charts: {} };
+
+            const loadingStateDiv = document.getElementById('loading-state');
+            const errorStateDiv = document.getElementById('error-state');
+            const errorMessageP = document.getElementById('error-message');
+            const mainContentDiv = document.getElementById('main-content');
+            const timeFilterButtons = document.getElementById('time-filter-buttons');
+            const messagesTableBody = document.getElementById('messages-table-body');
+            
+            function createCharts() {
+                const commonOptions = { responsive: true, maintainAspectRatio: false };
+                const chartConfigs = {
+                    rootCauseChart: { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: { ...commonOptions, plugins: { legend: { position: 'top' } } } },
+                    frequentTopicsChart: { type: 'bar', data: { labels: [], datasets: [{ label: 'Menções', data: [], backgroundColor: '#3b82f6' }] }, options: { ...commonOptions, indexAxis: 'y', plugins: { legend: { display: false } } } },
+                    trainingNeedsChart: { type: 'bar', data: { labels: [], datasets: [{ label: 'Qtd. Dúvidas', data: [], backgroundColor: '#f59e0b' }] }, options: { ...commonOptions, indexAxis: 'y', plugins: { legend: { display: false } } } }
+                };
+                for (const chartId in chartConfigs) {
+                    state.charts[chartId] = new Chart(document.getElementById(chartId).getContext('2d'), chartConfigs[chartId]);
+                }
+            }
+
+            function updateDashboard() {
+                const now = new Date();
+                const filteredMessages = state.allMessages.filter(msg => {
+                    const msgDate = new Date(msg.timestamp);
+                    switch (state.timeFilter) {
+                        case 'monthly': return msgDate.getMonth() === now.getMonth() && msgDate.getFullYear() === now.getFullYear();
+                        case 'quarterly':
+                            const q = Math.floor(now.getMonth() / 3);
+                            return Math.floor(msgDate.getMonth() / 3) === q && msgDate.getFullYear() === now.getFullYear();
+                        default: return msgDate.getFullYear() === now.getFullYear();
+                    }
+                });
+
+                const categoryCounts = filteredMessages.reduce((acc, { category }) => ({ ...acc, [category]: (acc[category] || 0) + 1 }), {});
+                state.charts.rootCauseChart.data.labels = Object.keys(categoryCounts);
+                state.charts.rootCauseChart.data.datasets[0].data = Object.values(categoryCounts);
+                state.charts.rootCauseChart.data.datasets[0].backgroundColor = Object.keys(categoryCounts).map(cat => CATEGORY_COLORS[cat] || '#6b7280');
+                state.charts.rootCauseChart.update();
+
+                const topicCounts = filteredMessages.reduce((acc, { topic }) => ({ ...acc, [topic]: (acc[topic] || 0) + 1 }), {});
+                const sortedTopics = Object.entries(topicCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                state.charts.frequentTopicsChart.data.labels = sortedTopics.map(item => item[0]);
+                state.charts.frequentTopicsChart.data.datasets[0].data = sortedTopics.map(item => item[1]);
+                state.charts.frequentTopicsChart.update();
+
+                const trainingCounts = filteredMessages.filter(m => m.category === 'Dificuldade do Atendente' || m.category === 'Dúvida de Uso').reduce((acc, { author }) => ({ ...acc, [author]: (acc[author] || 0) + 1 }), {});
+                const sortedTraining = Object.entries(trainingCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                state.charts.trainingNeedsChart.data.labels = sortedTraining.map(item => item[0]);
+                state.charts.trainingNeedsChart.data.datasets[0].data = sortedTraining.map(item => item[1]);
+                state.charts.trainingNeedsChart.update();
+
+                renderTable(filteredMessages);
+            }
+
+            function renderTable(messages) {
+                messagesTableBody.innerHTML = '';
+                if (messages.length === 0) {
+                    messagesTableBody.innerHTML = `<tr><td colspan="4" class="text-center py-8 text-slate-500">Nenhuma mensagem encontrada para o período selecionado.</td></tr>`;
+                    return;
+                }
+                messages.forEach(msg => {
+                    const row = document.createElement('tr');
+                    row.className = 'bg-white border-b hover:bg-slate-50';
+                    row.innerHTML = `<td class="px-4 py-4 font-medium text-slate-900">${msg.author}</td><td class="px-4 py-4 max-w-sm">${msg.text}</td><td class="px-4 py-4">${msg.topic}</td><td class="px-4 py-4"><span class="px-2 py-1 text-xs font-semibold rounded-full" style="background-color: ${CATEGORY_COLORS[msg.category] || '#6b7280'}20; color: ${CATEGORY_COLORS[msg.category] || '#6b7280'}">${msg.category}</span></td>`;
+                    messagesTableBody.appendChild(row);
+                });
+            }
+
+            timeFilterButtons.addEventListener('click', (e) => {
+                if (e.target.tagName === 'BUTTON') {
+                    state.timeFilter = e.target.dataset.filter;
+                    timeFilterButtons.querySelectorAll('button').forEach(btn => btn.classList.remove('bg-white', 'text-indigo-600', 'shadow-sm'));
+                    e.target.classList.add('bg-white', 'text-indigo-600', 'shadow-sm');
+                    updateDashboard();
+                }
+            });
+
+            async function initializeApp() {
+                try {
+                    const response = await fetch(SERVER_URL);
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({ details: `O servidor respondeu com um erro: ${response.status}` }));
+                        throw new Error(errorData.details || 'Ocorreu um erro desconhecido no servidor.');
+                    }
+                    state.allMessages = await response.json();
+                    
+                    if (!Array.isArray(state.allMessages)) throw new Error("O servidor não retornou uma lista de mensagens válida.");
+
+                    loadingStateDiv.classList.add('hidden');
+                    mainContentDiv.classList.remove('hidden');
+                    
+                    createCharts();
+                    updateDashboard();
+
+                } catch (error) {
+                    console.error("Falha ao inicializar a aplicação:", error);
+                    loadingStateDiv.classList.add('hidden');
+                    errorMessageP.textContent = `Não foi possível carregar os dados. Detalhes: ${error.message}`;
+                    errorStateDiv.classList.remove('hidden');
+                }
+            }
+
+            initializeApp();
+        });
+    </script>
+</body>
+</html>
