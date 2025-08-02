@@ -1,17 +1,21 @@
-// Importa as bibliotecas necessárias. 'express' para criar o servidor e 'node-fetch' para comunicar com as APIs do Slack e Gemini.
+// Importa as bibliotecas necessárias. 'cors' é a novidade para a correção.
 const express = require('express');
 const fetch = require('node-fetch');
+const cors = require('cors'); // 1. Importar o pacote 'cors'
 
 // Cria a aplicação do servidor.
 const app = express();
 const PORT = process.env.PORT || 3000; // O servidor irá correr na porta 3000 por defeito.
 
+// 2. Usar o 'cors' para permitir pedidos de qualquer origem
+// Isto diz ao servidor para aceitar o pedido do seu dashboard
+app.use(cors());
+
 // --- COORDENADAS E CHAVES SECRETAS ---
-// ATENÇÃO: Estes valores NUNCA devem estar diretamente no código em produção.
-// Devem ser guardados como "Variáveis de Ambiente" no seu servidor.
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || 'xoxb-SEU-TOKEN-DE-BOT-AQUI';
-const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID || 'C-SEU-ID-DE-CANAL-AQUI';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'SUA-CHAVE-DE-API-GEMINI-AQUI';
+// Estes valores são lidos das "Variáveis de Ambiente" que configurou na Vercel.
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // --- FUNÇÃO PARA BUSCAR MENSAGENS DO SLACK ---
 async function fetchSlackMessages() {
@@ -25,9 +29,13 @@ async function fetchSlackMessages() {
             }
         });
         if (!response.ok) {
-            throw new Error(`Erro ao buscar mensagens do Slack: ${response.statusText}`);
+            const errorBody = await response.text();
+            throw new Error(`Erro ao buscar mensagens do Slack: ${response.statusText} - ${errorBody}`);
         }
         const data = await response.json();
+        if (!data.ok) {
+            throw new Error(`Erro da API do Slack: ${data.error}`);
+        }
         // Filtra apenas as mensagens de utilizadores reais, ignorando bots ou join/leave.
         return data.messages.filter(msg => msg.type === 'message' && msg.user);
     } catch (error) {
@@ -64,7 +72,7 @@ async function analyzeMessageWithGemini(messageText) {
 }
 
 // --- O "ENDPOINT" DA API ---
-// O seu dashboard irá chamar este endereço (ex: http://seuservidor.com/api/messages)
+// O seu dashboard irá chamar este endereço (ex: https://seuservidor.com/api/messages)
 app.get('/api/messages', async (req, res) => {
     console.log("A receber pedido para buscar e analisar mensagens...");
     
