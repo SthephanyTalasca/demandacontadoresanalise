@@ -43,7 +43,6 @@ async function fetchSlackMessages() {
 // --- FUNÇÃO PARA ANALISAR UMA MENSAGEM COM O GEMINI ---
 async function analyzeMessageWithGemini(messageText) {
     if (!GEMINI_API_KEY) {
-        // Não lança um erro, apenas retorna uma análise padrão para não parar a aplicação.
         console.error('A variável de ambiente GEMINI_API_KEY não está definida.');
         return { category: 'Não Analisado', topic: 'Chave Gemini em falta' };
     }
@@ -76,14 +75,11 @@ async function analyzeMessageWithGemini(messageText) {
     }
 }
 
-// --- ENDPOINTS DA API ---
-app.get('/', (req, res) => {
-    res.send('Servidor do Panorama de Atendimento está a funcionar!');
-});
-
-app.get('/api/messages', async (req, res) => {
+// --- ENDPOINT PRINCIPAL DA API ---
+// ALTERAÇÃO: Agora responde no endereço raiz '/' em vez de '/api/messages'
+app.get('/', async (req, res) => {
     try {
-        console.log("A receber pedido para /api/messages");
+        console.log("A receber pedido para o endpoint raiz '/'");
         const slackMessages = await fetchSlackMessages();
         
         const analyzedMessagesPromises = slackMessages.map(msg => 
@@ -100,7 +96,7 @@ app.get('/api/messages', async (req, res) => {
         console.log("Análise concluída com sucesso. A enviar dados.");
         res.json(analyzedMessages);
     } catch (error) {
-        console.error("Erro final no endpoint /api/messages:", error.message);
+        console.error("Erro final no endpoint raiz '/':", error.message);
         res.status(500).json({ error: 'Falha ao processar o pedido.', details: error.message });
     }
 });
@@ -108,4 +104,3 @@ app.get('/api/messages', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Servidor a correr em http://localhost:${PORT}`);
 });
-
